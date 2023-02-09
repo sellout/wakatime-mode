@@ -1,4 +1,4 @@
-;;; wakatime-mode.el --- Automatic time tracking extension for WakaTime
+;;; wakatime-mode.el --- Automatic time tracking extension for WakaTime  -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2013  Gabor Torok <gabor@20y.hu>
 
@@ -33,6 +33,8 @@
 
 ;;; Code:
 
+(require 'cl-lib)
+
 (defconst wakatime-version "1.0.2")
 (defconst wakatime-user-agent "emacs-wakatime")
 (defvar wakatime-noprompt nil)
@@ -40,7 +42,7 @@
 (defvar wakatime-init-finished nil)
 
 (defgroup wakatime nil
-  "Customizations for WakaTime"
+  "Customizations for WakaTime."
   :group 'convenience
   :prefix "wakatime-")
 
@@ -49,9 +51,40 @@
   :type 'string
   :group 'wakatime)
 
-(defcustom wakatime-cli-path nil
+(defun s-blank (string)
+  "Return non-nil if STRING is empty or nil. Expects string."
+  (or (null string)
+      (zerop (length string))))
+
+(defun wakatime-find-binary (program)
+  "Find the full path to an executable PROGRAM."
+  (or (cl-find-if
+       #'file-exists-p
+       (list (concat "/usr/local/bin/" program)
+             (concat "/bin/" program)
+             (concat "/usr/local/sbin/" program)
+             (concat "/usr/sbin/" program)
+             (concat "/sbin/" program)
+             ;; For linux users
+             "~/.wakatime/wakatime-cli"
+             ;; For windows 10+ fix to get wakatime-cli.exe
+             (concat (string-replace "\\" "/"
+                                     (concat (or (getenv "HOMEDRIVE") "")
+                                             (or (getenv "HOMEPATH") "")))
+                     "/.wakatime/"
+                     program)
+             ;; For windows 10+ fix to get wakatime-cli-amd64.exe
+             (concat (string-replace "\\" "/"
+                                     (concat (or (getenv "HOMEDRIVE") "")
+                                             (or (getenv "HOMEPATH") "")))
+                     "/.wakatime/wakatime-cli-windows-amd64.exe")))
+      (let ((found-executable (executable-find "wakatime")))
+        (unless (s-blank found-executable)
+          found-executable))))
+
+(defcustom wakatime-cli-path (wakatime-find-binary "wakatime-cli")
   "Path of CLI client for WakaTime."
-  :type 'string
+  :type 'file
   :group 'wakatime)
 
 (defcustom wakatime-disable-on-error nil
@@ -60,22 +93,13 @@ the wakatime subprocess occurs."
   :type 'boolean
   :group 'wakatime)
 
-
-(defun wakatime-debug (msg)
-  "Write a string to the *messages* buffer."
-  (message "%s" msg))
-
-(defun s-blank (string)
-  "Return true if the string is empty or nil. Expects string."
-  (or (null string)
-    (zerop (length string))))
+(defun wakatime--home ()
+  "Return the directory where WakaTime files are kept."
+  (or (getenv "WAKATIME_HOME") "~"))
 
 (defun wakatime-init ()
   (unless wakatime-init-started
     (setq wakatime-init-started t)
-    (when (s-blank wakatime-cli-path)
-      (customize-set-variable 'wakatime-cli-path
-	(wakatime-find-binary "wakatime-cli")))
     (when (s-blank wakatime-cli-path)
       (wakatime-prompt-cli-path))
     (setq wakatime-init-finished t)))
@@ -84,69 +108,26 @@ the wakatime subprocess occurs."
   "Prompt user for api key."
   (interactive)
   (when (and (= (recursion-depth) 0) (not wakatime-noprompt))
-    (setq wakatime-noprompt t)
-    (let ((api-key (read-string "WakaTime API key: ")))
-      (customize-set-variable 'wakatime-api-key api-key)
-      (customize-save-customized))
-    (setq wakatime-noprompt nil)))
+    (let ((wakatime-noprompt t)
+          (api-key (read-string "WakaTime API key: ")))
+      (custom-set-variables (list 'wakatime-api-key api-key)))))
 
 (defun wakatime-prompt-cli-path ()
   "Prompt user for wakatime-cli binary path."
   (interactive)
   (when (and (= (recursion-depth) 0) (not wakatime-noprompt))
-    (setq wakatime-noprompt t)
-    (let ((cli-path (read-string "WakaTime CLI binary path: ")))
-      (customize-set-variable 'wakatime-cli-path cli-path)
-      (customize-save-customized))
-    (setq wakatime-noprompt nil)))
-
-(defun wakatime-find-binary (program)
-  "Find the full path to an executable program."
-  (cond
-    ((file-exists-p (format "/usr/local/bin/%s" program))
-      (format "/usr/local/bin/%s" program))
-    ((file-exists-p (format "/usr/bin/%s" program))
-      (format "/usr/bin/%s" program))
-    ((file-exists-p (format "/bin/%s" program))
-      (format "/bin/%s" program))
-    ((file-exists-p (format "/usr/local/sbin/%s" program))
-      (format "/usr/local/sbin/%s" program))
-    ((file-exists-p (format "/usr/sbin/%s" program))
-      (format "/usr/sbin/%s" program))
-    ((file-exists-p (format "/sbin/%s" program))
-      (format "/sbin/%s" program))
-    ;; For linux users
-    ((file-exists-p "~/.wakatime/wakatime-cli")
-      "~/.wakatime/wakatime-cli")
-    ;; For windows 10+ fix to get wakatime-cli.exe
-    ((file-exists-p (concat
-		(string-replace "\\" "/" (concat
-		(substitute-env-vars "$HOMEDRIVE")
-		(substitute-env-vars "$HOMEPATH")))
-		(format "/.wakatime/%s" program)))
-      (concat (string-replace "\\" "/" (concat
-		(substitute-env-vars "$HOMEDRIVE")
-		(substitute-env-vars "$HOMEPATH")))
-		(format "/.wakatime/%s" program)))
-    ;; For windows 10+ fix to get wakatime-cli-amd64.exe
-    ((file-exists-p (concat
-		(string-replace "\\" "/" (concat
-		(substitute-env-vars "$HOMEDRIVE")
-		(substitute-env-vars "$HOMEPATH")))
-		"/.wakatime/wakatime-cli-windows-amd64.exe"))
-      (concat (string-replace "\\" "/" (concat
-		(substitute-env-vars "$HOMEDRIVE")
-		(substitute-env-vars "$HOMEPATH")))
-		"/.wakatime/wakatime-cli-windows-amd64.exe"))
-    ((not (s-blank (executable-find "wakatime")))
-      (executable-find "wakatime"))
-    (t program)))
+    (let ((wakatime-noprompt t)
+          (cli-path (read-string "WakaTime CLI binary path: "
+                                 nil
+                                 nil
+                                 "wakatime-cli")))
+      (custom-set-variables (list 'wakatime-cli-path cli-path)))))
 
 (defun wakatime-client-command (savep &optional file)
   "Return client command executable and arguments.
    Set SAVEP to non-nil for write action."
-  (format "%s--entity %s --plugin \"%s/%s\" --time %.2f%s%s"
-    (if (s-blank wakatime-cli-path) "wakatime-cli " (format "%s " wakatime-cli-path))
+  (format "%s --entity %s --plugin \"%s/%s\" --time %.2f%s%s"
+    wakatime-cli-path
     (shell-quote-argument (or file (buffer-file-name (current-buffer))))
     wakatime-user-agent
     wakatime-version
@@ -156,47 +137,49 @@ the wakatime subprocess occurs."
 
 (defun wakatime-call (savep)
   "Call WakaTime command."
-  (let*
-    (
-      (command (wakatime-client-command savep))
-      (coding-system-for-read
-       (unless (eq coding-system-for-read 'auto-save-coding)
-       coding-system-for-read))
-      (process
-        (start-process
-          "Shell"
-          (generate-new-buffer " *WakaTime messages*")
-          shell-file-name
-          shell-command-switch
-          command
-        )
-      )
-    )
-
+  (let* ((command (wakatime-client-command savep))
+         (coding-system-for-read (unless (eq coding-system-for-read
+                                             'auto-save-coding)
+                                   coding-system-for-read))
+         (process (start-process "Shell"
+                                 (generate-new-buffer " *WakaTime messages*")
+                                 shell-file-name
+                                 shell-command-switch
+                                 command)))
     (set-process-sentinel process
       `(lambda (process signal)
          (when (memq (process-status process) '(exit signal))
            (kill-buffer (process-buffer process))
            (let ((exit-status (process-exit-status process)))
-             (when (and (not (= 0 exit-status)) (not (= 102 exit-status)) (not (= 112 exit-status)))
+             (unless (or (= 0 exit-status)
+                         (= 102 exit-status)
+                         (= 112 exit-status))
                (when wakatime-disable-on-error
                  (wakatime-mode -1)
                  (global-wakatime-mode -1))
                (cond
-                 ((= exit-status 103) (error "WakaTime Error (%s) Config file parse error. Check your ~/.wakatime.cfg file." exit-status))
-                 ((= exit-status 104) (error "WakaTime Error (%s) Invalid API Key. Set your api key with: (custom-set-variables '(wakatime-api-key \"XXXX\"))" exit-status))
-                 ((= exit-status 105) (error "WakaTime Error (%s) Unknown wakatime-cli error. Please check your ~/.wakatime/wakatime.log file and open a new issue at https://github.com/wakatime/wakatime-mode" exit-status))
-                 ((= exit-status 106) (error "WakaTime Error (%s) Malformed heartbeat error. Please check your ~/.wakatime/wakatime.log file and open a new issue at https://github.com/wakatime/wakatime-mode" exit-status))
-                 (t (error "WakaTime Error (%s) Make sure this command runs in a Terminal: %s" exit-status (wakatime-client-command nil ,(buffer-file-name (current-buffer)))))
-               )
-             )
-           )
-         )
-      )
-    )
-
-    (set-process-query-on-exit-flag process nil)
-  ))
+                ((= exit-status 103)
+                 (error "WakaTime Error (%s) Config file parse error. Check your %s/.wakatime.cfg file."
+                        exit-status
+                        (wakatime--home)))
+                ((= exit-status 104)
+                 (error "WakaTime Error (%s) Invalid API Key. Set your api key with: (custom-set-variables '(wakatime-api-key \"XXXX\"))"
+                        exit-status))
+                ((= exit-status 105)
+                 (error "WakaTime Error (%s) Unknown wakatime-cli error. Please check your %s/.wakatime/wakatime.log file and open a new issue at https://github.com/wakatime/wakatime-mode"
+                        exit-status
+                        (wakatime--home)))
+                ((= exit-status 106)
+                 (error "WakaTime Error (%s) Malformed heartbeat error. Please check your %s/.wakatime/wakatime.log file and open a new issue at https://github.com/wakatime/wakatime-mode"
+                        exit-status
+                        (wakatime--home))
+                (t
+                 (error "WakaTime Error (%s) Make sure this command runs in a Terminal: %s"
+                        exit-status
+                        (wakatime-client-command
+                         nil
+                         ,(buffer-file-name (current-buffer))))))))))))
+    (set-process-query-on-exit-flag process nil)))
 
 (defun wakatime-ping ()
   "Send ping notice to WakaTime."
@@ -221,17 +204,14 @@ the wakatime subprocess occurs."
   (remove-hook 'first-change-hook 'wakatime-ping t))
 
 (defun wakatime-turn-on (defer)
-  "Turn on WakaTime."
+  "Turn on WakaTime.
+DEFER delays the action by a second."
   (if defer
-    (run-at-time "1 sec" nil 'wakatime-turn-on nil)
-    (let ()
-      (wakatime-init)
-      (if wakatime-init-finished
+      (run-at-time "1 sec" nil 'wakatime-turn-on nil)
+    (wakatime-init)
+    (if wakatime-init-finished
         (wakatime-bind-hooks)
-        (run-at-time "1 sec" nil 'wakatime-turn-on nil)
-      )
-    )
-  ))
+      (run-at-time "1 sec" nil 'wakatime-turn-on nil))))
 
 (defun wakatime-turn-off ()
   "Turn off WakaTime."
@@ -247,11 +227,14 @@ the wakatime subprocess occurs."
   (cond
     (noninteractive (setq wakatime-mode nil))
     (wakatime-mode (wakatime-turn-on t))
-    (t (wakatime-turn-off))
-  ))
+    (t (wakatime-turn-off))))
 
 ;;;###autoload
-(define-globalized-minor-mode global-wakatime-mode wakatime-mode (lambda () (wakatime-mode 1)))
+(define-globalized-minor-mode wakatime-global-mode wakatime-mode
+  (lambda () (wakatime-mode 1)))
+
+(define-obsolete-function-alias 'global-wakatime-mode 'wakatime-global-mode
+  "2023-02-07")
 
 (provide 'wakatime-mode)
 ;;; wakatime-mode.el ends here
